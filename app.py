@@ -1,30 +1,98 @@
-# This example requires the 'message_content' intent.
-
+import asyncio
 import os
 from dotenv import load_dotenv
-import discord
 
+from typing import List, Optional
+
+import discord
+from discord.ext import commands
+
+MY_GUILD = 1234859743634526229  # айдишник нашего сервера
 
 load_dotenv()
 
-intents = discord.Intents.default()
-intents.message_content = True
+class Pixel(commands.Bot):
+    def __init__(
+            self,
+            *args,
+            # initial_extensions: List[str],
+            # db_pool: asyncpg.Pool,
+            # web_client: ClientSession,
+            testing_guild_id: Optional[int] = None,
+            **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        # self.db_pool = db_pool
+        # self.web_client = web_client
+        # self.initial_extensions = initial_extensions
+        self.testing_guild_id = testing_guild_id
 
-client = discord.Client(intents=intents)
+
+    async def setup_hook(self) -> None:
+
+        # here, we are loading extensions prior to sync to ensure we are syncing interactions defined in those extensions.
+
+        # for extension in self.initial_extensions:
+        #     await self.load_extension(extension)
+
+        # In overriding setup hook,
+        # we can do things that require a bot prior to starting to process events from the websocket.
+        # In this case, we are using this to ensure that once we are connected, we sync for the testing guild.
+        # You should not do this for every guild or for global sync, those should only be synced when changes happen.
+        if self.testing_guild_id:
+            guild = discord.Object(self.testing_guild_id)
+            # We'll copy in the global commands to test with:
+            self.tree.copy_global_to(guild=guild)
+            # followed by syncing to the testing guild.
+            await self.tree.sync(guild=guild)
+
+        # This would also be a good place to connect to our database and
+        # load anything that should be in memory prior to handling events.
+
+async def main():
+
+    # When taking over how the bot process is run, you become responsible for a few additional things.
+
+    # 1. logging
+
+    # for this example, we're going to set up a rotating file logger.
+    # for more info on setting up logging,
+    # see https://discordpy.readthedocs.io/en/latest/logging.html and https://docs.python.org/3/howto/logging.html
+
+    # logger = logging.getLogger('discord')
+    # logger.setLevel(logging.INFO)
+    #
+    # handler = logging.handlers.RotatingFileHandler(
+    #     filename='discord.log',
+    #     encoding='utf-8',
+    #     maxBytes=32 * 1024 * 1024,  # 32 MiB
+    #     backupCount=5,  # Rotate through 5 files
+    # )
+    # dt_fmt = '%Y-%m-%d %H:%M:%S'
+    # formatter = logging.Formatter('[{asctime}] [{levelname:<8}] {name}: {message}', dt_fmt, style='{')
+    # handler.setFormatter(formatter)
+    # logger.addHandler(handler)
+
+    # Alternatively, you could use:
+    # discord.utils.setup_logging(handler=handler, root=False)
+
+    # One of the reasons to take over more of the process though
+    # is to ensure use with other libraries or tools which also require their own cleanup.
+
+    # Here we have a web client and a database pool, both of which do cleanup at exit.
+    # We also have our bot, which depends on both of these.
+
+    intents = discord.Intents.default()
+    intents.message_content = True
+    async with Pixel(commands.when_mentioned, testing_guild_id=MY_GUILD, intents=intents) as bot:
+        @bot.tree.command()
+        async def hello(interaction: discord.Interaction):
+            """Says hello!"""
+            await interaction.response.send_message(f'Hi, {interaction.user.mention}')
+
+        token = os.getenv('DISCORD_TOKEN', '')
+        await bot.start(token)
 
 
-@client.event
-async def on_ready():
-    print(f'We have logged in as {client.user}')
-
-
-@client.event
-async def on_message(message):
-    if message.author == client.user:
-        return
-
-    if message.content.startswith('$hello'):
-        await message.channel.send('Hello!')
-
-token = os.getenv('DISCORD_TOKEN')
-client.run(token)
+# For most use cases, after defining what needs to run, we can just tell asyncio to run it:
+asyncio.run(main())
