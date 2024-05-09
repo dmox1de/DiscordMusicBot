@@ -83,7 +83,7 @@ class Music(commands.Cog):
 
     @commands.hybrid_command()
     async def yt(self, ctx, *, url):
-        """Plays from a url (almost anything youtube_dl supports)"""
+        """Plays from an url (almost anything youtube_dl supports)"""
 
         async with ctx.typing():
             player = await YTDLSource.from_url(url, loop=self.bot.loop)
@@ -93,7 +93,7 @@ class Music(commands.Cog):
 
     @commands.hybrid_command()
     async def stream(self, ctx, *, url):
-        """Streams from a url (same as yt, but doesn't predownload)"""
+        """Streams from an url (same as yt, but doesn't predownload)"""
 
         async with ctx.typing():
             player = await YTDLSource.from_url(url, loop=self.bot.loop, stream=True)
