@@ -11,7 +11,6 @@ import datetime
 import lqueue as lq
 
 MY_GUILD = 1234859743634526229  # айдишник нашего сервера
-# MY_GUILD = 612673564268560394  # айдишник моего сервера
 
 load_dotenv()
 
@@ -36,6 +35,7 @@ ytdl_format_options = {
 
 ffmpeg_options = {
     'executable': 'ffmpeg.exe',
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
 }
 
@@ -71,7 +71,6 @@ class Pixel(commands.Bot):
             self,
             *args,
             testing_guild_id: Optional[int] = None,
-            # testing_guild_id: Optional[int] = MY_GUILD,
             **kwargs,
     ):
         intents = discord.Intents.default()
@@ -82,32 +81,22 @@ class Pixel(commands.Bot):
 
     async def setup_hook(self) -> None:
 
-        # here, we are loading extensions prior to sync to ensure we are syncing interactions defined in those extensions.
-
-        # for extension in self.initial_extensions:
-        #     await self.load_extension(extension)
-
-        # In overriding setup hook,
-        # we can do things that require a bot prior to starting to process events from the websocket.
-        # In this case, we are using this to ensure that once we are connected, we sync for the testing guild.
-        # You should not do this for every guild or for global sync, those should only be synced when changes happen.
         if self.testing_guild_id:
             guild = discord.Object(self.testing_guild_id)
-            # We'll copy in the global commands to test with:
-            self.tree.copy_global_to(guild=guild)
-            # followed by syncing to the testing guild.
+
+            # self.tree.clear_commands(guild=guild)
+
+            # self.tree.copy_global_to(guild=guild)
+
             await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
-
-        # This would also be a good place to connect to our database and
-        # load anything that should be in memory prior to handling events.
 
     async def on_ready(self):
         print(f'Авторизован как {self.user} (Status: online)')
         print('------------------------')
         await self.change_presence(activity=discord.Activity(
-            type=discord.ActivityType.listening, name='лютое музло'))
+            type=discord.ActivityType.listening, name='музыку'))
 
 
 class Music(commands.Cog):
@@ -120,72 +109,197 @@ class Music(commands.Cog):
 
     @commands.hybrid_command()
     async def join(self, ctx):
-        """Joins a voice channel"""
+        """Добавить бота в ваш голосовой канал"""
 
         if ctx.message.author.voice:
+            flag = True
+
             if not ctx.voice_client:
                 await ctx.message.author.voice.channel.connect(reconnect=True)
             else:
-                await ctx.voice_client.move_to(ctx.message.author.voice.channel)
+                if ctx.voice_client.channel == ctx.author.voice.channel:
+                    flag = False
+                else:
+                    await ctx.voice_client.move_to(ctx.message.author.voice.channel)
+
+            if flag:
+                embed = discord.Embed(title='🎵 Активация',
+                                      description=f'Бот присоединился к каналу {ctx.author.voice.channel.mention}',
+                                      color=discord.Colour.blue(),
+                                      timestamp=datetime.datetime.now())
+                embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                await ctx.reply(embed=embed)
         else:
-            await ctx.reply('❗ Вы должны находиться в голосовом канале ❗')
+            embed = discord.Embed(title='❗ Отказ',
+                                  description='Вы должны находиться в голосовом канале',
+                                  color=discord.Colour.brand_red(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            await ctx.reply(embed=embed)
 
     @commands.hybrid_command()
     async def disconnect(self, ctx):
+        """Отключить бота от голосового канала"""
 
         if ctx.voice_client:
+            embed = discord.Embed(title='💤 Отключение',
+                                  description=f'Бот отключен от канала {ctx.voice_client.channel.mention}',
+                                  color=discord.Colour.dark_green(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+
             await ctx.voice_client.disconnect()
-            await ctx.message.reply(f'🍺 Ушёл в запой вместе с \
-    {ctx.message.author.mention} 🍺')
+            await ctx.reply(embed=embed)
         else:
-            await ctx.reply('Вы попытались разбудить бота,\
-     но он в отключке 💤')
+            embed = discord.Embed(title='❗ Отказ',
+                                  description='Бот не подключен ни к одному голосовому каналу',
+                                  color=discord.Colour.brand_red(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            await ctx.reply(embed=embed)
+
+    @commands.hybrid_command()
+    async def stop(self, ctx):
+        """Отключить бота и очистить очередь"""
+
+        if ctx.voice_client:
+            embed = discord.Embed(title='💤 Отключение',
+                                  description=f'Бот отключен от канала {ctx.voice_client.channel.mention}',
+                                  color=discord.Colour.dark_green(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+
+            await ctx.voice_client.disconnect()
+            await self._clear()
+            await ctx.reply(embed=embed)
+        else:
+            embed = discord.Embed(title='❗ Отказ',
+                                  description='Бот не подключен к голосовому каналу',
+                                  color=discord.Colour.brand_red(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            await ctx.reply(embed=embed)
 
     # ########################[PLAY MUSIC BLOCK]#########################
 
     @commands.hybrid_command()
     async def add(self, ctx, url):
+        """Добавить видео из Youtube по url или названию"""
+
         source = await YTDLSource.from_url(url)
 
         URL = source.data['formats'][0]['url']
         name = source.data['title']
         time = str(datetime.timedelta(seconds=source.data['duration']))
-        self.songs_queue.q_add([name, time, URL])
-        embed = discord.Embed(description=f'Записываю [{name}]({url}) в очередь 📝',
-                              colour=discord.Colour.red())
+        link = source.data.get('webpage_url')
+        self.songs_queue.q_add([name, time, URL, link])
+
+        embed = discord.Embed(title='⚡️ Обновление очереди',
+                              description=f'**Добавлено [{name}]({link})**',
+                              color=discord.Colour.brand_green(),
+                              timestamp=datetime.datetime.now())
+        embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
         await ctx.reply(embed=embed)
 
-    def step_and_remove(self, voice_client):
+    def step_and_remove(self, voice_client, channel):
         if self.loop_flag:
             self.songs_queue.q_add(self.songs_queue.get_value()[0])
         self.songs_queue.q_remove()
-        asyncio.run(self.audio_player_task(voice_client))
 
-    async def audio_player_task(self, voice_client):
+        asyncio.run(self.audio_player_task(voice_client, channel))
+
+    async def audio_player_task(self, voice_client, channel):
         if not voice_client.is_playing() and self.songs_queue.get_value():
             url = self.songs_queue.get_value()[0][2]
             source = await YTDLSource.from_url(url)
-            voice_client.play(source, after=lambda e: self.step_and_remove(voice_client))
+            voice_client.play(source, after=lambda e: self.step_and_remove(voice_client, channel))
+
+            name = self.songs_queue.get_value()[0][0]
+            time = self.songs_queue.get_value()[0][1]
+            link = self.songs_queue.get_value()[0][3]
+
+            embed = discord.Embed(title='🔥 Сейчас играет',
+                                  description=f'**[{name}]({link})**',
+                                  color=discord.Colour.blurple(),
+                                  timestamp=datetime.datetime.now())
+            embed.add_field(name='**Длительность**', value=f'{time}')
+
+            asyncio.run_coroutine_threadsafe(self._track(channel, embed), self.bot.loop)
 
     @commands.hybrid_command()
     async def play(self, ctx, url):
+        """Включить видео из Youtube по url или названию"""
+
         await self.join(ctx)
         await self.add(ctx, url)
-        voice_client = ctx.guild.voice_client
-        await self.audio_player_task(voice_client)
+        await self.audio_player_task(ctx.guild.voice_client, ctx.channel)
 
     @commands.hybrid_command()
     async def loop(self, ctx):
+        """Включить повтор"""
+
         self.loop_flag = True
-        await ctx.reply('Залуплено')
+
+        embed = discord.Embed(title='⚡️ Параметры очереди',
+                              description=f'**`Включено` повторение всей очереди**',
+                              color=discord.Colour.brand_green(),
+                              timestamp=datetime.datetime.now())
+        embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+        await ctx.reply(embed=embed)
 
     @commands.hybrid_command()
     async def unloop(self, ctx):
+        """Отключить повтор"""
+
         self.loop_flag = False
-        await ctx.reply('Отлуплено')
+
+        embed = discord.Embed(title='⚡️ Параметры очереди',
+                              description=f'**`Отключено` повторение всей очереди**',
+                              color=discord.Colour.brand_red(),
+                              timestamp=datetime.datetime.now())
+        embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+        await ctx.reply(embed=embed)
+
+    @staticmethod
+    async def _track(channel, embed):
+        await channel.send(embed=embed)
+
+    @commands.hybrid_command()
+    async def track(self, ctx):
+        """Информация о текущем треке"""
+
+        voice = ctx.guild.voice_client
+        if voice:
+            if voice.is_playing():
+                name = self.songs_queue.get_value()[0][0]
+                time = self.songs_queue.get_value()[0][1]
+                link = self.songs_queue.get_value()[0][3]
+
+                embed = discord.Embed(title='🔥 Сейчас играет',
+                                      description=f'**[{name}]({link})**',
+                                      color=discord.Colour.blurple(),
+                                      timestamp=datetime.datetime.now())
+                embed.add_field(name='**Длительность**', value=f'{time}')
+                embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                await ctx.send(embed=embed)
+            else:
+                embed = discord.Embed(title='❗ Бот ничего не воспроизводит',
+                                      color=discord.Colour.brand_red(),
+                                      timestamp=datetime.datetime.now())
+                embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                await ctx.reply(embed=embed)
+        else:
+            embed = discord.Embed(title='❗ Отказ',
+                                  description='Бот не подключен к голосовому каналу',
+                                  color=discord.Colour.brand_red(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            await ctx.reply(embed=embed)
 
     @commands.hybrid_command()
     async def queue(self, ctx):
+        """Очередь треков"""
+
         if len(self.songs_queue.get_value()) > 0:
             only_names_and_time_queue = []
             for i in self.songs_queue.get_value():
@@ -199,78 +313,171 @@ class Music(commands.Cog):
                 queue_of_queues.append(only_names_and_time_queue[c:c + 10])
                 c += 10
 
-            embed = discord.Embed(title=f'ОЧЕРЕДЬ [LOOP: {self.loop_flag}]',
+            embed = discord.Embed(title=f"🧾 Очередь треков [Повтор: {'**Включен**' if self.loop_flag else '**Отключен**'}]",
                                   description=''.join(queue_of_queues[0]),
-                                  colour=discord.Colour.red())
+                                  colour=discord.Colour.gold())
             await ctx.send(embed=embed)
 
             for i in range(1, len(queue_of_queues)):
                 embed = discord.Embed(description=''.join(queue_of_queues[i]),
-                                      colour=discord.Colour.red())
+                                      colour=discord.Colour.gold())
                 await ctx.send(embed=embed)
         else:
-            await ctx.send('Очередь пуста 📄')
+            embed = discord.Embed(title=f"🧾 Очередь треков [Повтор: {'**Включен**' if self.loop_flag else '**Отключен**'}]",
+                                  description='**Пусто**',
+                                  colour=discord.Colour.gold())
+            await ctx.send(embed=embed)
 
     @commands.hybrid_command()
     async def pause(self, ctx):
-        voice = discord.utils.get(self.bot.voice_clients, guild=ctx.guild)
+        """Пауза"""
+
+        voice = ctx.guild.voice_client
         if voice:
             voice.pause()
-            await ctx.reply('Шо ты сделал? Порвал струну. Без неё играй!')
+
+            embed = discord.Embed(title='⚡️ Пауза',
+                                  color=discord.Colour.brand_green(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            await ctx.reply(embed=embed)
+        else:
+            embed = discord.Embed(title='❗ Отказ',
+                                  description='Бот не подключен к голосовому каналу',
+                                  color=discord.Colour.brand_red(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            await ctx.reply(embed=embed)
 
     @commands.hybrid_command()
     async def resume(self, ctx):
-        voice = discord.utils.get(self.bot.voice_clients, guild=ctx.guild)
+        """Снять с паузы"""
+
+        voice = ctx.guild.voice_client
         if voice:
-            if voice.is_paused():
-                voice.resume()
-                await ctx.reply('Поменял струну.')
+            if not voice.is_playing() and not self.songs_queue.is_empty():
+                if voice.is_paused():
+                    voice.resume()
+                else:
+                    await self.audio_player_task(ctx.guild.voice_client, ctx.channel)
+
+                embed = discord.Embed(title='⚡️ Снят с паузы',
+                                      color=discord.Colour.brand_green(),
+                                      timestamp=datetime.datetime.now())
+                embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                await ctx.reply(embed=embed)
+            else:
+                embed = discord.Embed(title='❗ Очередь пуста',
+                                      color=discord.Colour.brand_red(),
+                                      timestamp=datetime.datetime.now())
+                embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                await ctx.reply(embed=embed)
+        else:
+            if not self.songs_queue.is_empty():
+                await self.join(ctx)
+                await self.audio_player_task(ctx.guild.voice_client, ctx.channel)
+            else:
+                embed = discord.Embed(title='❗ Очередь пуста',
+                                      color=discord.Colour.brand_red(),
+                                      timestamp=datetime.datetime.now())
+                embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                await ctx.reply(embed=embed)
 
     @commands.hybrid_command()
     async def skip(self, ctx):
-        voice = discord.utils.get(self.bot.voice_clients, guild=ctx.guild)
+        """Пропустить трек"""
+
+        voice = ctx.guild.voice_client
         if voice:
             voice.stop()
+
+            embed = discord.Embed(title='⚡️ Пропущен текущий трек',
+                                  color=discord.Colour.brand_green(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            await ctx.reply(embed=embed)
+
+    async def _clear(self):
+        while not self.songs_queue.is_empty():
+            self.songs_queue.q_remove()
 
     @commands.hybrid_command()
     async def clear(self, ctx):
-        voice = discord.utils.get(self.bot.voice_clients, guild=ctx.guild)
+        """Очистить очередь"""
+
+        voice = ctx.guild.voice_client
         if voice:
             voice.stop()
-            while not self.songs_queue.is_empty():
-                self.songs_queue.q_remove()
+
+        await self._clear()
+
+        embed = discord.Embed(title='⚡️ Очередь очищена',
+                              color=discord.Colour.brand_green(),
+                              timestamp=datetime.datetime.now())
+        embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+        await ctx.reply(embed=embed)
 
     @commands.hybrid_command()
     async def remove(self, ctx, index):
+        """Удалить трек по номеру в очереди"""
+
         try:
             if len(self.songs_queue.get_value()) > 0:
                 index = int(index) - 1
                 if index >= 0:
-                    d = self.songs_queue.q_rem_by_index(index)[0]
-                    await ctx.reply(f'Вычеркнул из списка: {d}')
+                    track = self.songs_queue.q_rem_by_index(index)
+                    name = track[0]
+                    link = track[3]
+
+                    embed = discord.Embed(title='⛔️ Удаление из очереди',
+                                          description=f'**[{name}]({link})**',
+                                          color=discord.Colour.brand_green(),
+                                          timestamp=datetime.datetime.now())
+                    embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                    await ctx.reply(embed=embed)
             else:
-                await ctx.reply('Нечего удалять')
+                embed = discord.Embed(title='⚡️ Очередь пуста',
+                                      color=discord.Colour.brand_green(),
+                                      timestamp=datetime.datetime.now())
+                embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                await ctx.reply(embed=embed)
         except:
-            await ctx.reply(f'Песни с таким индексом не существует')
+            embed = discord.Embed(title='❗ Песни с таким индексом не существует',
+                                  color=discord.Colour.brand_red(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            await ctx.reply(embed=embed)
 
     @commands.hybrid_command()
     async def volume(self, ctx, volume: int):
-        """Changes the player's volume"""
+        """Изменить громкость бота"""
 
         if ctx.voice_client is None:
-            return await ctx.send("Not connected to a voice channel.")
+            embed = discord.Embed(title='❗ Отказ',
+                                  description='Бот не подключен ни к одному голосовому каналу',
+                                  color=discord.Colour.brand_red(),
+                                  timestamp=datetime.datetime.now())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            return await ctx.reply(embed=embed)
 
         ctx.voice_client.source.volume = volume / 100
-        await ctx.send(f"Changed volume to {volume}%")
+
+        embed = discord.Embed(title=f'⚡️ Громкость бота установлена на {volume}%',
+                              color=discord.Colour.dark_blue(),
+                              timestamp=datetime.datetime.now())
+        embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+        await ctx.reply(embed=embed)
+
+    @commands.hybrid_command()
+    async def ping(self, ctx):
+        """Узнать задержку бота"""
+
+        await ctx.send(f'Задержка отклика бота: {round(self.bot.latency * 1000)}ms 🧠')
 
 
 async def main():
 
     async with Pixel() as bot:
-
-        @bot.hybrid_command()
-        async def ping(ctx):
-            await ctx.send(f'Задержка отклика бота: {round(bot.latency * 1000)}ms 🧠')
 
         await bot.add_cog(Music(bot))
         await bot.start(os.getenv('DISCORD_TOKEN', ''))
