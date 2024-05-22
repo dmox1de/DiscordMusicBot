@@ -211,8 +211,12 @@ class Music(commands.Cog):
     async def audio_player_task(self, voice_client, channel):
         if not voice_client.is_playing() and self.songs_queue.get_value():
             url = self.songs_queue.get_value()[0][2]
+
             source = await YTDLSource.from_url(url)
-            voice_client.play(source, after=lambda e: self.step_and_remove(voice_client, channel))
+            try:
+                voice_client.play(source, after=lambda e: self.step_and_remove(voice_client, channel))
+            except Exception as e:
+                print(f"Произошла ошибка: {type(e).__name__}")
 
             name = self.songs_queue.get_value()[0][0]
             time = self.songs_queue.get_value()[0][1]
